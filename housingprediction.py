@@ -5,7 +5,7 @@ import numpy as np
 from sklearn.linear_model import LassoCV
 pd.set_option('display.max_columns', None)
 pd.set_option('display.max_rows', None)
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, normalize
 from sklearn.model_selection import train_test_split
 import time
 #%matplotlib qt
@@ -142,6 +142,11 @@ all_numerical=numerical_columns(removed_area_outliers).columns
 encoded_features=pd.get_dummies(removed_area_outliers)
 encoded_cols=encoded_features.columns
 
+# Standardize dataset for PCA and K-Means
+full_categorical=encoded_features.drop(all_numerical ,axis=1).reset_index().drop(["index"], axis=1)
+standardize_full_numerical=pd.DataFrame(StandardScaler().fit_transform(encoded_features[all_numerical]), columns=all_numerical)
+standardize_full_numerical=pd.concat([standardize_full_numerical, full_categorical], axis=1)
+
 # Split into training and test sets
 X_train, X_test, y_train, y_test = train_test_split(encoded_features, y, test_size=0.2, random_state=42)
 
@@ -169,7 +174,7 @@ weighted_col_names=encoded_features_train.columns
 feature_strength=BestFeat(encoded_features_train, y_train).Params_2(LassoCV(cv=5), weighted_col_names)
 largest_absolute_strength=abs(feature_strength)
 
-non_zero_features=largest_absolute_strength[abs(largest_absolute_strength)>5000]
+non_zero_features=largest_absolute_strength[abs(largest_absolute_strength)>7500]
 strongest_features=non_zero_features.sort_values()
 
 # Visualize the features
@@ -191,4 +196,3 @@ plt.show()
 # Choose the largest weighted parameters
 best_train_features=strongest_predictors
 best_test_features=encoded_features_test[strongest_features.index]
-
