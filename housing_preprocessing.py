@@ -1,14 +1,15 @@
 import pandas as pd
-import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.linear_model import LassoCV
 from sklearn.ensemble import RandomForestRegressor
 pd.set_option('display.max_columns', None)
 pd.set_option('display.max_rows', None)
-from sklearn.preprocessing import StandardScaler, normalize
+from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer, KNNImputer
 from sklearn.model_selection import train_test_split
+import seaborn as sns
+from scipy import stats
 
 # Check columns for numerical/categorical replace with mean/median
 class FillNA:
@@ -89,6 +90,7 @@ for i in na_checking:
 
 # Remove columns with greater than 20% of values missing
 na_columns=MissingVals(na_missing, na_columns, 0.2)
+
 # Separate categorical from numerical columns
 categorical_only=[]
 numerical_only=na_columns.copy()
@@ -116,8 +118,10 @@ for i,j in enumerate(categorical_entry_count):
 # Retrieve variables most correlated to the columns with missing values
 numerical_corr=[data.corr()[i].drop(index='SalePrice').sort_values(ascending=False).apply(lambda x: x if (x < 1 and x>0.3) else np.nan) for i in numerical_only]
 numerical_corr=[i.dropna() for i in numerical_corr]
+
 # Standardize data to apply KNN and impute values
 standardize_imputer=StandardScaler()
+
 # Impute missing numerical values by applying KNearest Neighbors
 knn_impute=KNNImputer(missing_values=np.nan, n_neighbors=5)
 for i in numerical_corr:
@@ -177,24 +181,29 @@ plt.show()
 removed_area_outliers['Bathrooms']=removed_area_outliers['BsmtFullBath'] + removed_area_outliers['FullBath'] + 0.5*removed_area_outliers['BsmtHalfBath'] +  0.5*removed_area_outliers['HalfBath']
 removed_area_outliers['TotalInsideArea']=removed_area_outliers['GrLivArea'] + removed_area_outliers['TotalBsmtSF']
 
-# Separate true prediction values from the dataset
-y=removed_area_outliers.loc[:, 'SalePrice']
+# Separate true prediction values from the dataset, high variance so apply log transform to Sale Price
+unscaled_y=removed_area_outliers.loc[:, 'SalePrice']
+y=np.log(removed_area_outliers.loc[:, 'SalePrice'])
 removed_area_outliers=removed_area_outliers.drop(y.name ,axis=1)
+
 # Record the columns which are numerical
 all_numerical=numerical_columns(removed_area_outliers).columns
 
 # One-hot encode the categorical features
-encoded_features=pd.get_dummies(removed_area_outliers)
-encoded_cols=encoded_features.columns
+full_untransformed_data=pd.get_dummies(removed_area_outliers)
+encoded_cols=full_untransformed_data.columns
 
-# Standardize dataset for PCA and K-Means
-full_categorical=encoded_features.drop(all_numerical ,axis=1).reset_index().drop(["index"], axis=1)
-standardize_full_numerical=pd.DataFrame(StandardScaler().fit_transform(encoded_features[all_numerical]), columns=all_numerical)
+# Separate categorical features
+full_categorical=full_untransformed_data.drop(all_numerical ,axis=1).reset_index().drop(["index"], axis=1)
+
+# Standardize dataset for variable selection
+standardize_full_numerical=pd.DataFrame(StandardScaler().fit_transform(full_untransformed_data[all_numerical]), columns=all_numerical)
 standardize_full_categorical=pd.DataFrame(StandardScaler().fit_transform(full_categorical), columns=full_categorical.columns)
 standardize_full=pd.concat([standardize_full_numerical, standardize_full_categorical], axis=1)
+whole_dataset=pd.concat([full_untransformed_data, y], axis=1)
 
 # Split into training and test sets
-X_train, X_test, y_train, y_test = train_test_split(encoded_features, y, test_size=0.2, random_state=42)
+X_train, X_test, y_train, y_test = train_test_split(full_untransformed_data, y, test_size=0.2, random_state=42)
 
 # Take the numerical columns and scale, separate from rest of dataset
 numerical_train_col=X_train[all_numerical]
@@ -209,41 +218,60 @@ features_test=pd.concat([categorical_test_predictors, numerical_test_col], axis=
 
 # Scale the numerical features
 standard_scaling=StandardScaler()
-encoded_features_train=pd.DataFrame(standard_scaling.fit_transform(features_train), columns=complete_column_names)
-encoded_features_test=pd.DataFrame(standard_scaling.fit_transform(features_test), columns=complete_column_names)
+full_transformed_data_train=pd.DataFrame(standard_scaling.fit_transform(features_train), columns=complete_column_names)
+full_transformed_data_test=pd.DataFrame(standard_scaling.fit_transform(features_test), columns=complete_column_names)
+
+# Variable selection based upon highest correlations with Sales Price
+sales_price_corr=abs(whole_dataset.corr()["SalePrice"]).sort_values().drop(index="SalePrice")
+strongest_corr_feat=sales_price_corr[sales_price_corr>0.65]
+
+# Check for highly correlated features
+corr_df=pd.concat([full_untransformed_data[strongest_corr_feat.index], y], axis=1)
+plt.figure(figsize=(10,10))
+sns.heatmap(corr_df.corr(), annot=True)
+plt.show()
+
+# Check for the assumptions of linear regression for important correlation variables before applying Lasso Variable Selection
+plt.figure(figsize=(10,10))
+stats.probplot(y, plot=plt)
+plt.show()
+
+plt.scatter(full_untransformed_data["TotalInsideArea"], y)
+plt.scatter(full_untransformed_data["GrLivArea"], y)
+plt.scatter(full_untransformed_data["GarageArea"], y)
+plt.scatter(full_untransformed_data["GrLivArea"], y)
+plt.scatter(full_untransformed_data["TotalInsideArea"], full_untransformed_data["GrLivArea"] )
+
+# Consider Removing GrLivArea since high correlation with TotalInsideArea
 
 # Variable Selection with Lasso
-weighted_col_names=encoded_features_train.columns
-feature_strength=BestFeat().Params(encoded_features_train, y_train ,LassoCV(cv=5), weighted_col_names)
+weighted_col_names=full_transformed_data_train.columns
+feature_strength=BestFeat().Params(full_transformed_data_train, y_train ,LassoCV(cv=5), weighted_col_names)
 largest_absolute_strength=abs(feature_strength)
 
-# Variable Selection with Random Forest
-tree_features=BestFeat().Trees(encoded_features_train, y_train.values.ravel(), RandomForestRegressor(n_estimators=100), weighted_col_names)
-largest_tree_strength=abs(feature_strength)
+# Select Lasso Features
+strongest_lasso_feat=largest_absolute_strength.nlargest(6)
+strongest_features=strongest_lasso_feat.sort_values()
 
-significant_lasso_features=largest_absolute_strength[abs(largest_absolute_strength)> 5000]
-significant_tree_features=largest_tree_strength[abs(largest_tree_strength) > 5000]
-strongest_features=significant_lasso_features.sort_values()
-strongest_features_trees=significant_tree_features.sort_values()
+# Check for highly correlated Lasso Features
+lasso_df=pd.concat([full_untransformed_data[strongest_features.index], y], axis=1)
+plt.figure(figsize=(10,10))
+sns.heatmap(lasso_df.corr(), annot=True)
+plt.show()
+
+# Not the highest correlation, will compare in visualization clustering which is better
 
 # Visualize the features
-tree_index_names=[strongest_features_trees.index[i] for i in range(len(strongest_features_trees))]
+corr_index_names=[strongest_corr_feat.index[i] for i in range(len(strongest_corr_feat))]
 lasso_index_names=[strongest_features.index[i] for i in range(len(strongest_features))]
 strongest_lasso_vals=[strongest_features[i] for i in strongest_features.index]
-strongest_tree_vals=[strongest_features_trees[i] for i in strongest_features_trees.index]
+strongest_corr_vals=[strongest_corr_feat[i] for i in strongest_corr_feat.index]
 
 fig, feat = plt.subplots(nrows=1, ncols=2, figsize=(30, 30))
 feat[0].bar(lasso_index_names, strongest_lasso_vals)
 feat[0].title.set_text("Lasso Parameters")
-feat[1].bar(tree_index_names ,strongest_tree_vals)
-feat[1].title.set_text("Random Forest Parameters")
+feat[1].bar(corr_index_names, strongest_corr_vals)
+feat[1].title.set_text("Correlation Parameters")
 plt.setp(feat[0].get_xticklabels(), rotation=90)
 plt.setp(feat[1].get_xticklabels(), rotation=90)
 plt.show()
-
-# Unscaled best training and test features
-strongest_predictors=features_train[strongest_features.index]
-unscaled_test=features_test[strongest_features.index]
-
-# Most important features that are standardized to be used for visualization
-standardize_best_features=standardize_full[strongest_predictors.columns]
