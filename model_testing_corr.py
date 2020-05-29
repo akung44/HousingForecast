@@ -103,12 +103,12 @@ random_grid={'booster': booster, 'gamma':gamma,
 best_xgb=RandomizedSearchCV(xgb_regressor, random_grid, n_iter=25, n_jobs=-1, cv=10).fit(scaled_x, y_train)
 best_xgb_model=XGBRegressor(**best_xgb.best_params_)
 
-# 5-fold cross validation for the new XGB model
+# 10-fold cross validation for the new XGB model
 best_xgb=cross_val_score(best_xgb_model, scaled_x, y_train, cv=10, scoring='neg_mean_absolute_error')
 print("The errors for each fold are" , best_xgb)
 print("The average error is", best_xgb.mean())
 
-# 5-fold cross validation for the AdaBoost model
+# 10-fold cross validation for the AdaBoost model
 ada_model=AdaBoostRegressor()
 cv_ada=cross_val_score(ada_model, scaled_x, y_train, cv=10, scoring='neg_mean_absolute_error')
 print("The errors for each fold are" , cv_ada)
@@ -127,7 +127,7 @@ random_grid={'n_estimators':n_estimators,
 best_ada=RandomizedSearchCV(ada_model, random_grid, n_iter=25, n_jobs=-1, cv=5).fit(scaled_x, y_train)
 best_ada_model=AdaBoostRegressor(**best_ada.best_params_)
 
-# 5-fold cross validation for the new AdalBoost  model
+# 10-fold cross validation for the new AdalBoost  model
 best_ada_cv=cross_val_score(best_ada_model, scaled_x, y_train, cv=10, scoring='neg_mean_absolute_error')
 print("The errors for each fold are" , best_ada_cv)
 print("The average error is", best_ada_cv.mean())
